@@ -7,9 +7,41 @@ from textual._path import CSSPathType
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.driver import Driver
-from textual.widgets import Footer, Label
+from textual.widgets import Footer, RichLog
 
 from lib import KokoroAgent, SoundAgent
+
+
+def get_text_from_paste():
+    text = paste()
+    if not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+class SourceView(RichLog):
+    def __init__(
+        self,
+        *,
+        min_width: int = 78,
+        auto_scroll: bool = True,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+        disabled: bool = False,
+    ) -> None:
+        super().__init__(
+            max_lines=None,
+            min_width=min_width,
+            wrap=True,
+            highlight=False,
+            markup=False,
+            auto_scroll=auto_scroll,
+            name=name,
+            id=id,
+            classes=classes,
+            disabled=disabled,
+        )
 
 
 class KokoroApp(App):
@@ -83,7 +115,7 @@ class KokoroApp(App):
         self.kokoro_listener()
 
     def compose(self) -> ComposeResult:
-        yield Label("LMAO")
+        yield SourceView()
         yield Footer()
 
     @work(exclusive=True, group="kokoro")
@@ -94,14 +126,16 @@ class KokoroApp(App):
     def action_new(self):
         self.kokoro.cancel()
         self.audio_index += 1
-        text = paste()
+        text = get_text_from_paste()
         self.kokoro.feed(text=text, index=self.audio_index)
+        self.query_one(SourceView).clear().write(text)
 
     def action_append(self):
         if self.audio_index < 0:
             self.audio_index = 0
-        text = paste()
+        text = get_text_from_paste()
         self.kokoro.feed(text)
+        self.query_one(SourceView).write(text)
 
     def action_test(self):
         with SoundFile("test-data/test.wav") as sf:
