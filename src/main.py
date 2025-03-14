@@ -30,6 +30,13 @@ class KokoroApp(App):
             show=True,
         ),
         Binding(
+            "a",
+            "append",
+            "Append",
+            tooltip="Append clipboard text to the current audio.",
+            show=True,
+        ),
+        Binding(
             "space",
             "toggle_pp",
             "Play/Pause",
@@ -69,6 +76,7 @@ class KokoroApp(App):
     ):
         super().__init__(driver_class, css_path, watch_css, ansi_color)
         self.sound = sound
+        self.audio_index = -1
 
     def on_mount(self):
         self.kokoro = KokoroAgent()
@@ -81,12 +89,19 @@ class KokoroApp(App):
     @work(exclusive=True, group="kokoro")
     async def kokoro_listener(self):
         async for chunk in self.kokoro.get_outputs():
-            if chunk.data is not None:
-                self.sound.feed(chunk.data)
+            self.sound.feed(chunk.data, chunk.index, chunk.overwrite)
 
     def action_new(self):
+        self.kokoro.cancel()
+        self.audio_index += 1
         text = paste()
-        self.kokoro.input_queue.put_nowait(text)
+        self.kokoro.feed(text=text, index=self.audio_index)
+
+    def action_append(self):
+        if self.audio_index < 0:
+            self.audio_index = 0
+        text = paste()
+        self.kokoro.feed(text)
 
     def action_test(self):
         with SoundFile("test-data/test.wav") as sf:

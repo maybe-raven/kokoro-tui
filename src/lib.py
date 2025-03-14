@@ -7,7 +7,7 @@ from multiprocessing import Process
 from multiprocessing import Queue as MQueue
 from queue import Empty, Queue
 from threading import Event, Thread
-from typing import List, Literal, Optional, Union
+from typing import List, Optional
 
 from kokoro import KModel, KPipeline
 from soundcard import default_speaker
@@ -141,20 +141,31 @@ class SoundAgent:
 
 
 class KokoroAgent:
+    @dataclass
+    class Input:
+        def __init__(
+            self, text: str, index: Optional[int] = None, overwrite: bool = False
+        ) -> None:
+            self.text = text
+            self.index = index
+            self.overwrite = overwrite
+
     @dataclass()
     class Output:
         def __init__(
             self,
-            type: Union[Literal["chunk"], Literal["end"]],
-            data: Optional[FloatTensor] = None,
+            data: FloatTensor,
+            index: Optional[int] = None,
+            overwrite: bool = False,
         ) -> None:
-            self.type = type
             self.data = data
+            self.index = index
+            self.overwrite = overwrite
 
     def __init__(self):
         super().__init__()
-        self.input_queue = Queue()
-        self.output_queue = Queue()
+        self.input_queue = Queue[KokoroAgent.Input]()
+        self.output_queue = Queue[KokoroAgent.Output]()
         self._stop_event = Event()
         self._cancel_event = Event()
         self._thread = Thread(target=self._run)
@@ -165,29 +176,32 @@ class KokoroAgent:
         self._pipeline_a = KPipeline(lang_code="a", model=self._model)
         while not self._stop_event.is_set():
             try:
-                text = self.input_queue.get(timeout=1)
-                self._process_task(text)
-                self.output_queue.put(KokoroAgent.Output("end"))
+                log("retrieving input...")
+                input = self.input_queue.get(timeout=1)
+                self._cancel_event.clear()
+                log("processing input", input=input)
+                generator = self._pipeline_a(
+                    input.text,
+                    voice="af_heart",
+                    speed=1.3,  # type:ignore
+                    split_pattern="",
+                )
+                for r in generator:
+                    audio = r.audio
+                    if audio is not None:
+                        log("got chunk", len=len(audio))
+                        self.output_queue.put(
+                            KokoroAgent.Output(audio, input.index, input.overwrite)
+                        )
+                    if self._cancel_event.is_set():
+                        log("cancelling task")
+                        self._cancel_event.clear()
+                        break
             except Empty:
                 continue
 
-    def _process_task(self, text: str):
-        log("processing input", text=text)
-        generator = self._pipeline_a(
-            text,
-            voice="af_heart",
-            speed=1.3,  # type:ignore
-            split_pattern="",
-        )
-        for r in generator:
-            audio = r.audio
-            if audio is not None:
-                log("got chunk", len=len(audio))
-                self.output_queue.put(KokoroAgent.Output("chunk", audio))
-            if self._cancel_event.is_set():
-                log("cancelling task")
-                self._cancel_event.clear()
-                return
+    def feed(self, text: str, index: Optional[int] = None, overwrite: bool = False):
+        self.input_queue.put(KokoroAgent.Input(text, index, overwrite))
 
     def stop(self):
         self._cancel_event.set()
