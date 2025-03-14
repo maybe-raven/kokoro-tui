@@ -1,0 +1,19 @@
+[project]
+name = "kokoro-tui"
+version = "0.0.1"
+description = "A minimal TUI app for Kokoro TTS."
+readme = "README.md"
+requires-python = ">= 3.12"
+dependencies = [
+    "kokoro",
+    "textual",
+    "pyperclip",
+    "soundcard",
+    "soundfile",
+    "pip"
+]
+
+[dependency-groups]
+dev = [
+    "textual-dev>=1.7.0",
+]
