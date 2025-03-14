@@ -503,6 +503,13 @@ class KokoroApp(App):
             show=False,
         ),
         Binding(
+            "ctrl+g",
+            "clear_history",
+            "Clear History",
+            tooltip="Clear all audio history.",
+            show=True,
+        ),
+        Binding(
             "c",
             "config",
             "Update Config",
@@ -545,6 +552,7 @@ class KokoroApp(App):
         self.sound = sound
         self.index = -1
         self.texts = []
+        self.generation = 0
         self.args = args
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -580,7 +588,15 @@ class KokoroApp(App):
     @work(exclusive=True, group="kokoro")
     async def kokoro_listener(self):
         async for chunk in self.kokoro.get_outputs():
-            self.sound.feed(chunk.data, chunk.index, chunk.overwrite)
+            log(
+                "got audio chunk",
+                chunk_generation=chunk.generation,
+                app_generation=self.generation,
+                chunk_index=chunk.index,
+                app_len=len(self.texts),
+            )
+            if chunk.generation == self.generation and chunk.index < len(self.texts):
+                self.sound.feed(chunk.data, chunk.index, chunk.overwrite)
             self.update_loading_indicator()
 
     async def action_new(self):
@@ -593,7 +609,7 @@ class KokoroApp(App):
         text = get_text_from_paste()
         self.texts[self.index] += text
         self.update_loading_indicator(True)
-        self.kokoro.feed(text=text, index=self.index)
+        self.kokoro.feed(text=text, index=self.index, generation=self.generation)
         self.query_one(SourceView).write(text)
 
     def action_toggle_pp(self):
@@ -611,11 +627,23 @@ class KokoroApp(App):
         self.kokoro.cancel()
         text = self.texts[self.index]
         log("regenerating", text=text, index=self.index)
-        self.kokoro.feed(text=text, index=self.index, overwrite=True)
+        self.kokoro.feed(
+            text=text, index=self.index, generation=self.generation, overwrite=True
+        )
         self.update_loading_indicator(True)
 
     def action_config(self):
         self.update_config()
+
+    def action_clear_history(self):
+        self.kokoro.cancel()
+        self.update_loading_indicator(False)
+        self.generation += 1
+        self.index = -1
+        self.texts.clear()
+        self.sound.clear_history()
+        self.query_one(SourceView).clear()
+        self.query_one(ListView).clear()
 
     @work(exclusive=True, group="update_config")
     async def update_config(self):
@@ -749,7 +777,7 @@ class KokoroApp(App):
         self.kokoro.cancel()
         self.index = len(self.texts)
         self.update_loading_indicator(True)
-        self.kokoro.feed(text=text, index=self.index)
+        self.kokoro.feed(text=text, index=self.index, generation=self.generation)
         self.texts.append(text)
         self.refresh_bindings()
         self.query_one(SourceView).clear().write(text)

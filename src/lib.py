@@ -16,6 +16,7 @@ from soundcard import default_speaker
 from textual import log
 from torch import FloatTensor, Tensor, cat
 
+
 SAMPLE_RATE = 24000
 BLOCK_SIZE = 512
 SLEEP_TIME = 0.2
@@ -28,7 +29,7 @@ class SoundAgent:
     @dataclass
     class DataInput(Input):
         data: Tensor
-        index: Optional[int] = None
+        index: int
         overwrite: bool = False
 
     @dataclass
@@ -44,6 +45,10 @@ class SoundAgent:
         path: str
 
     @dataclass
+    class ClearHistory(Input):
+        pass
+
+    @dataclass
     class Output:
         error: Optional[Exception] = None
 
@@ -52,7 +57,7 @@ class SoundAgent:
         self._start = 0
         self._end = BLOCK_SIZE
         self._data: List[Tensor] = []
-        self._track_index = None
+        self._track_index = -1
         self._is_playing = MEvent()
         self._is_playing.set()
         self.output_queue: MQueue[SoundAgent.Output] = MQueue()
@@ -78,7 +83,7 @@ class SoundAgent:
 
     def _get_block(self) -> Optional[Tensor]:
         """Get block to play."""
-        if self._track_index is None or len(self._data) <= self._track_index:
+        if self._track_index < 0 or len(self._data) <= self._track_index:
             return None
         track_data = self._data[self._track_index]
         n = len(track_data)
@@ -104,13 +109,20 @@ class SoundAgent:
                 self._seek(self._start + int(SAMPLE_RATE * input.secs))
             elif isinstance(input, SoundAgent.Save):
                 self._save(input.path)
+            elif isinstance(input, SoundAgent.ClearHistory):
+                self._clear_history()
         except Empty:
             pass
 
+    def _clear_history(self):
+        self._data.clear()
+        self._seek(0)
+        self._track_index = -1
+
     def _add_data(self, input: DataInput):
-        index = input.index or self._track_index
+        index = input.index
         n = len(self._data)
-        if index is None or n <= index:
+        if n <= index:
             self._data.append(input.data)
             self._track_index = n
             self._seek(0)
@@ -156,9 +168,7 @@ class SoundAgent:
         else:
             self._is_playing.set()
 
-    def feed(
-        self, data: FloatTensor, index: Optional[int] = None, overwrite: bool = False
-    ):
+    def feed(self, data: FloatTensor, index: int, overwrite: bool = False):
         self.input_queue.put(SoundAgent.DataInput(data, index, overwrite))
 
     def change_track(self, index: int):
@@ -166,6 +176,9 @@ class SoundAgent:
 
     def seek_secs(self, secs: float):
         self.input_queue.put(SoundAgent.SeekSecs(secs))
+
+    def clear_history(self):
+        self.input_queue.put(SoundAgent.ClearHistory())
 
     async def get_output(self) -> Optional[Output]:
         while not self._stop_event.is_set():
@@ -200,7 +213,8 @@ class KokoroAgent:
     @dataclass
     class DataInput(Input):
         text: str
-        index: Optional[int] = None
+        index: int
+        generation: int
         overwrite: bool = False
 
     @dataclass
@@ -210,7 +224,8 @@ class KokoroAgent:
     @dataclass()
     class Output:
         data: FloatTensor
-        index: Optional[int] = None
+        index: int
+        generation: int
         overwrite: bool = False
 
     def __init__(self, config: Optional[Config] = None):
@@ -232,7 +247,6 @@ class KokoroAgent:
             self._pipeline = KPipeline(lang_code="a", model=self._model)
         while not self._stop_event.is_set():
             try:
-                log("retrieving input...")
                 input = self.input_queue.get(timeout=1)
                 if isinstance(input, KokoroAgent.UpdateConfig):
                     with self._config_lock:
@@ -262,7 +276,10 @@ class KokoroAgent:
                             log("got chunk", len=len(audio))
                             self.output_queue.put(
                                 KokoroAgent.Output(
-                                    audio, input.index, input.overwrite and first_chunk
+                                    audio,
+                                    input.index,
+                                    input.generation,
+                                    input.overwrite and first_chunk,
                                 )
                             )
                             first_chunk = False
@@ -274,8 +291,8 @@ class KokoroAgent:
             except Empty:
                 continue
 
-    def feed(self, text: str, index: Optional[int] = None, overwrite: bool = False):
-        self.input_queue.put(KokoroAgent.DataInput(text, index, overwrite))
+    def feed(self, text: str, index: int, generation: int, overwrite: bool = False):
+        self.input_queue.put(KokoroAgent.DataInput(text, index, generation, overwrite))
 
     def stop(self):
         self._cancel_event.set()
