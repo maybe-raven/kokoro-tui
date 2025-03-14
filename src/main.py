@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime
 from typing import ClassVar, Type
 
@@ -8,11 +9,12 @@ from textual import log, on, work
 from textual._path import CSSPathType
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, VerticalGroup
+from textual.containers import Grid, Horizontal, VerticalGroup
 from textual.driver import Driver
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Footer, Label, ListItem, ListView, RichLog
+from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, RichLog
 
 from lib import KokoroAgent, SoundAgent
 
@@ -162,6 +164,73 @@ class AudioList(Widget):
         listview.index = n
 
 
+class FilepathInput(ModalScreen[str]):
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", key_display="esc"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        title_input = Input(placeholder="Enter a file path.")
+        title_input.border_subtitle = (
+            r"\[[white]enter[/]] Save  \[[white]esc[/]] Cancel"
+        )
+        yield title_input
+
+    @on(Input.Submitted)
+    def close_screen(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value)
+
+    def action_cancel(self):
+        self.dismiss()
+
+
+class ConfirmationScreen(ModalScreen[bool]):
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding(
+            "y",
+            "confirm(True)",
+            "Yes",
+            show=False,
+        ),
+        Binding(
+            "n",
+            "confirm(False)",
+            "No",
+            show=False,
+        ),
+    ]
+
+    def __init__(
+        self,
+        filename: str,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(name, id, classes)
+        self.filename = filename
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(
+                f"'{self.filename}' already exists. Are you sure you want to overwrite it?",
+                id="question",
+            ),
+            Button("[Y]es", variant="error", id="overwrite"),
+            Button("[N]o", variant="primary", id="cancel"),
+            id="dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "overwrite":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+    def action_confirm(self, v: bool):
+        self.dismiss(v)
+
+
 class KokoroApp(App):
     CSS_PATH = "app.tcss"
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -185,6 +254,13 @@ class KokoroApp(App):
             "append",
             "Append",
             tooltip="Append clipboard text to the current audio.",
+            show=True,
+        ),
+        Binding(
+            "s",
+            "save",
+            "Save",
+            tooltip="Save the selected audio to file.",
             show=True,
         ),
         Binding(
@@ -230,6 +306,11 @@ class KokoroApp(App):
         self.index = -1
         self.texts = []
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if self.index < 0 and action in ["append", "save"]:
+            return None
+        return super().check_action(action, parameters)
+
     def on_mount(self):
         self.kokoro = KokoroAgent()
         self.kokoro_listener()
@@ -249,8 +330,9 @@ class KokoroApp(App):
         self.kokoro.cancel()
         self.index = len(self.texts)
         text = get_text_from_paste()
-        self.texts.append(text)
         self.kokoro.feed(text=text, index=self.index)
+        self.texts.append(text)
+        self.refresh_bindings()
         self.query_one(SourceView).clear().write(text)
         await self.query_one(AudioList).append(text)
 
@@ -277,6 +359,33 @@ class KokoroApp(App):
 
     def action_seek_right(self):
         self.sound.seek_secs(5)
+
+    def action_save(self):
+        if self.index < 0:
+            self.notify("No audio to save.")
+            return
+        self.save_audio()
+
+    @work(exclusive=True, group="save_audio")
+    async def save_audio(self):
+        filepath = await self.push_screen(FilepathInput(), wait_for_dismiss=True)
+        if filepath is None:
+            return
+        log("saving audio: got filepath: ", filepath=filepath)
+        if os.path.isfile(filepath):
+            confirmation = await self.push_screen(
+                ConfirmationScreen(filepath), wait_for_dismiss=True
+            )
+            if not confirmation:
+                return
+        self.sound.save(filepath)
+        result = await self.sound.get_output()
+        if result is None:
+            return
+        elif result.error is None:
+            self.notify(f"Success: Audio saved to '{filepath}'.")
+        else:
+            self.notify(f"Error: {result.error}", severity="error")
 
     @on(ListView.Highlighted)
     def update_selection(self, event: ListView.Highlighted):

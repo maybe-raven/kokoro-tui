@@ -9,6 +9,7 @@ from queue import Empty, Queue
 from threading import Event, Thread
 from typing import List, Optional
 
+import soundfile
 from kokoro import KModel, KPipeline
 from soundcard import default_speaker
 from textual import log
@@ -37,6 +38,14 @@ class SoundAgent:
     class SeekSecs(Input):
         secs: float
 
+    @dataclass
+    class Save(Input):
+        path: str
+
+    @dataclass
+    class Output:
+        error: Optional[Exception] = None
+
     def __init__(self) -> None:
         self.input_queue: MQueue[SoundAgent.Input] = MQueue()
         self._start = 0
@@ -45,6 +54,7 @@ class SoundAgent:
         self._track_index = None
         self._is_playing = MEvent()
         self._is_playing.set()
+        self.output_queue: MQueue[SoundAgent.Output] = MQueue()
         self._stop_event = MEvent()
         self._thread = Process(target=self._run)
         self._thread.start()
@@ -91,6 +101,8 @@ class SoundAgent:
                 self._seek(0)
             elif isinstance(input, SoundAgent.SeekSecs):
                 self._seek(self._start + int(SAMPLE_RATE * input.secs))
+            elif isinstance(input, SoundAgent.Save):
+                self._save(input.path)
         except Empty:
             pass
 
@@ -110,6 +122,20 @@ class SoundAgent:
     def _seek(self, target: int):
         self._start = 0 if target < 0 else target
         self._end = self._start + BLOCK_SIZE
+
+    def _save(self, path: str):
+        if self._track_index is None:
+            return
+        try:
+            soundfile.write(
+                path, data=self._data[self._track_index], samplerate=SAMPLE_RATE
+            )
+            self.output_queue.put(SoundAgent.Output())
+        except Exception as e:
+            self.output_queue.put(SoundAgent.Output(e))
+
+    def save(self, path: str):
+        self.input_queue.put(SoundAgent.Save(path))
 
     def stop(self):
         self._stop_event.set()
@@ -139,6 +165,13 @@ class SoundAgent:
 
     def seek_secs(self, secs: float):
         self.input_queue.put(SoundAgent.SeekSecs(secs))
+
+    async def get_output(self) -> Optional[Output]:
+        while not self._stop_event.is_set():
+            try:
+                return self.output_queue.get_nowait()
+            except Empty:
+                await asyncio.sleep(SLEEP_TIME)
 
 
 class KokoroAgent:
