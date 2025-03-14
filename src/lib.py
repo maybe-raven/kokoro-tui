@@ -88,6 +88,7 @@ class SoundAgent:
                     self._track_index = len(self._data) - 1
                 else:
                     self._track_index = input.index
+                self._seek(0)
             elif isinstance(input, SoundAgent.SeekSecs):
                 self._seek(self._start + int(SAMPLE_RATE * input.secs))
         except Empty:

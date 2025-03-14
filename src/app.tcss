@@ -1,0 +1,26 @@
+AudioList {
+    width: 1fr;
+}
+
+AudioListItem {
+    border: round purple;
+}
+
+VerticalGroup {
+    min-height: 2;
+}
+
+HumanizedTimeLabel {
+    height: auto;
+}
+
+SourceView {
+    width: 3fr;
+    border: heavy purple;
+}
+
+.ellipsis {
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    width: 100%;
+}
