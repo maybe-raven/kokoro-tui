@@ -407,6 +407,10 @@ class ConfigScreen(ModalScreen[KokoroAgent.Config]):
         selection = cast(Select[str], self.query_one("#input-device")).value
         self.config.device = None if isinstance(selection, NoSelection) else selection
         self.config.trf = cast(Switch, self.query_one("#input-trf")).value
+        try:
+            self.config.save()
+        except (PermissionError, IOError) as e:
+            self.notify(f"Error: failed to write config file: {e}", severity="error")
         self.dismiss(self.config)
 
     def action_cancel(self):
@@ -593,7 +597,12 @@ class KokoroApp(App):
         return super().check_action(action, parameters)
 
     async def on_mount(self):
-        self.kokoro = KokoroAgent()
+        try:
+            config = KokoroAgent.Config.load()
+        except PermissionError as e:
+            self.notify(f"Error: failed to read config file: {e}.")
+            config = KokoroAgent.Config()
+        self.kokoro = KokoroAgent(config)
         self.kokoro_listener()
         if self.args.new:
             await self.make_audio(get_text_from_paste(), False)

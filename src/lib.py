@@ -1,8 +1,11 @@
 import asyncio
+import json
+import os
 import time
 from abc import ABC
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from json import JSONDecodeError
 from multiprocessing import Event as MEvent
 from multiprocessing import Process
 from multiprocessing import Queue as MQueue
@@ -20,6 +23,8 @@ from torch import FloatTensor, Tensor, cat
 SAMPLE_RATE = 24000
 BLOCK_SIZE = 512
 SLEEP_TIME = 0.2
+
+CONFIG_FILEPATH = "~/.config/kokoro-tui/config.json"
 
 
 class SoundAgent:
@@ -195,10 +200,31 @@ class KokoroAgent:
     @dataclass
     class Config:
         voice: str = "af_heart"
-        speed: Union[float, Callable[[int], float]] = 1.3
+        speed: float = 1.3
         split_pattern: str = "\n"
         trf: bool = False
         device: Optional[str] = None
+
+        @classmethod
+        def load(cls):
+            try:
+                with open(os.path.expanduser(CONFIG_FILEPATH), "r") as f:
+                    data = json.load(f)
+                    return KokoroAgent.Config(**data)
+            except (
+                FileNotFoundError,
+                IsADirectoryError,
+                IOError,
+                JSONDecodeError,
+                TypeError,
+            ):
+                return KokoroAgent.Config()
+
+        def save(self):
+            filepath = os.path.expanduser(CONFIG_FILEPATH)
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "w") as f:
+                json.dump(asdict(self), f)
 
         def __post_init__(self):
             self.lang_code = self.voice[0]
@@ -228,11 +254,11 @@ class KokoroAgent:
         generation: int
         overwrite: bool = False
 
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Config):
         super().__init__()
         self.input_queue = Queue[KokoroAgent.Input]()
         self.output_queue = Queue[KokoroAgent.Output]()
-        self._config = config or KokoroAgent.Config()
+        self._config = config
         self._config_lock = Lock()
         self._pipeline: Optional[KPipeline] = None
         self._stop_event = Event()
