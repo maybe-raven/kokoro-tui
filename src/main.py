@@ -400,6 +400,13 @@ class KokoroApp(App):
             show=True,
         ),
         Binding(
+            "o",
+            "open",
+            "Open File",
+            tooltip="Open a text file and generate an audio from it.",
+            show=True,
+        ),
+        Binding(
             "q",
             "quit",
             "Quit",
@@ -557,14 +564,7 @@ class KokoroApp(App):
             self.sound.feed(chunk.data, chunk.index, chunk.overwrite)
 
     async def action_new(self):
-        self.kokoro.cancel()
-        self.index = len(self.texts)
-        text = get_text_from_paste()
-        self.kokoro.feed(text=text, index=self.index)
-        self.texts.append(text)
-        self.refresh_bindings()
-        self.query_one(SourceView).clear().write(text)
-        await self.query_one(AudioList).append(text)
+        await self.make_audio(get_text_from_paste())
 
     async def action_append(self):
         if self.index < 0:
@@ -614,7 +614,7 @@ class KokoroApp(App):
     @work(exclusive=True, group="save_audio")
     async def save_audio(self):
         filepath = await self.push_screen(FilepathInput(), wait_for_dismiss=True)
-        if filepath is None:
+        if not filepath:
             return
         log("saving audio: got filepath: ", filepath=filepath)
         if os.path.isfile(filepath):
@@ -684,6 +684,52 @@ class KokoroApp(App):
             self.action_hide_help_panel()
         else:
             self.action_show_help_panel()
+
+    def action_open(self):
+        self.audio_from_file()
+
+    @work(exclusive=True, group="audio_from_file")
+    async def audio_from_file(self):
+        filepath = await self.push_screen(FilepathInput(), wait_for_dismiss=True)
+        if not filepath:
+            return
+        try:
+            with open(filepath, mode="r", encoding="utf-8") as f:
+                text = f.read()
+            await self.make_audio(text)
+        except FileNotFoundError:
+            self.notify(
+                f"Error: The file '{filepath}' does not exist.", severity="error"
+            )
+        except PermissionError:
+            self.notify(
+                f"Error: You do not have the necessary permissions to access '{filepath}'.",
+                severity="error",
+            )
+        except IsADirectoryError:
+            self.notify(
+                f"Error: '{filepath}' is a directory, not a file.",
+                severity="error",
+            )
+        except UnicodeDecodeError:
+            self.notify(
+                f"Error: file '{filepath}' contains invalid unicode.",
+                severity="error",
+            )
+        except IOError as e:
+            self.notify(
+                f"An I/O error occurred: {e.strerror}",
+                severity="error",
+            )
+
+    async def make_audio(self, text: str):
+        self.kokoro.cancel()
+        self.index = len(self.texts)
+        self.kokoro.feed(text=text, index=self.index)
+        self.texts.append(text)
+        self.refresh_bindings()
+        self.query_one(SourceView).clear().write(text)
+        await self.query_one(AudioList).append(text)
 
     async def action_quit(self) -> None:
         self.kokoro.stop()
