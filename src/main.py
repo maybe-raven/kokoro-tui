@@ -1,7 +1,7 @@
 import asyncio
 import os
 from datetime import datetime
-from typing import ClassVar, Type
+from typing import ClassVar, Type, cast
 
 from pyperclip import paste
 from soundfile import SoundFile
@@ -9,12 +9,24 @@ from textual import log, on, work
 from textual._path import CSSPathType
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Grid, Horizontal, VerticalGroup
+from textual.containers import Grid, Horizontal, HorizontalGroup, VerticalGroup
 from textual.driver import Driver
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.validation import ValidationResult, Validator
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, RichLog
+from textual.widgets import (
+    Button,
+    Footer,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    RichLog,
+    Select,
+    Switch,
+)
+from textual.widgets._select import NoSelection
 
 from lib import KokoroAgent, SoundAgent
 
@@ -231,6 +243,153 @@ class ConfirmationScreen(ModalScreen[bool]):
         self.dismiss(v)
 
 
+class PositiveNumberValidator(Validator):
+    def validate(self, value: str) -> ValidationResult:
+        try:
+            x = float(value)
+            if x > 0:
+                return self.success()
+            else:
+                return self.failure("speed must be positive")
+        except ValueError:
+            return self.failure("not a number")
+
+
+class ConfigScreen(ModalScreen[KokoroAgent.Config]):
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding(
+            "ctrl+enter",
+            "confirm",
+            "Confirm",
+            show=True,
+        ),
+        Binding("escape", "cancel", "Cancel", show=True, key_display="esc"),
+    ]
+
+    def __init__(
+        self,
+        config: KokoroAgent.Config,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(name, id, classes)
+        self.config = config
+
+    def compose(self) -> ComposeResult:
+        with Grid(id="config-grid"):
+            yield Label("voice")
+            yield Select(
+                [
+                    ("af_heart", "af_heart"),
+                    ("af_alloy", "af_alloy"),
+                    ("af_aoede", "af_aoede"),
+                    ("af_bella", "af_bella"),
+                    ("af_jessica", "af_jessica"),
+                    ("af_kore", "af_kore"),
+                    ("af_nicole", "af_nicole"),
+                    ("af_nova", "af_nova"),
+                    ("af_river", "af_river"),
+                    ("af_sarah", "af_sarah"),
+                    ("af_sky", "af_sky"),
+                    ("am_adam", "am_adam"),
+                    ("am_echo", "am_echo"),
+                    ("am_eric", "am_eric"),
+                    ("am_fenrir", "am_fenrir"),
+                    ("am_liam", "am_liam"),
+                    ("am_michael", "am_michael"),
+                    ("am_onyx", "am_onyx"),
+                    ("am_puck", "am_puck"),
+                    ("am_santa", "am_santa"),
+                    ("bf_alice", "bf_alice"),
+                    ("bf_emma", "bf_emma"),
+                    ("bf_isabella", "bf_isabella"),
+                    ("bf_lily", "bf_lily"),
+                    ("bm_daniel", "bm_daniel"),
+                    ("bm_fable", "bm_fable"),
+                    ("bm_george", "bm_george"),
+                    ("bm_lewis", "bm_lewis"),
+                    ("jf_alpha", "jf_alpha"),
+                    ("jf_gongitsune", "jf_gongitsune"),
+                    ("jf_nezumi", "jf_nezumi"),
+                    ("jf_tebukuro", "jf_tebukuro"),
+                    ("jm_kumo", "jm_kumo"),
+                    ("zf_xiaobei", "zf_xiaobei"),
+                    ("zf_xiaoni", "zf_xiaoni"),
+                    ("zf_xiaoxiao", "zf_xiaoxiao"),
+                    ("zf_xiaoyi", "zf_xiaoyi"),
+                    ("zm_yunjian", "zm_yunjian"),
+                    ("zm_yunxi", "zm_yunxi"),
+                    ("zm_yunxia", "zm_yunxia"),
+                    ("zm_yunyang", "zm_yunyang"),
+                    ("ef_dora", "ef_dora"),
+                    ("em_alex", "em_alex"),
+                    ("em_santa", "em_santa"),
+                    ("ff_siwis", "ff_siwis"),
+                    ("hf_alpha", "hf_alpha"),
+                    ("hf_beta", "hf_beta"),
+                    ("hm_omega", "hm_omega"),
+                    ("hm_psi", "hm_psi"),
+                    ("if_sara", "if_sara"),
+                    ("im_nicola", "im_nicola"),
+                    ("pf_dora", "pf_dora"),
+                    ("pm_alex", "pm_alex"),
+                    ("pm_santa", "pm_santa"),
+                ],
+                value=self.config.voice,
+                id="input-voice",
+            )
+            yield Label("speed")
+            yield Input(
+                value=str(self.config.speed),
+                type="number",
+                restrict=r"^\d*\.?\d*",
+                max_length=8,
+                validators=PositiveNumberValidator(),
+                id="input-speed",
+            )
+            yield Label("split pattern")
+            yield Input(
+                value=self.config.split_pattern.replace("\\", "\\\\"),
+                id="input-pattern",
+            )
+            yield Label("device")
+            yield Select(
+                [("cpu", "cpu"), ("cuda", "cuda"), ("mps", "mps")],
+                value=Select.BLANK
+                if self.config.device is None
+                else self.config.device,
+                id="input-device",
+            )
+            yield Label("trf")
+            yield Switch(value=self.config.trf, id="input-trf")
+            yield HorizontalGroup(
+                Button("Confirm", variant="primary", id="confirm"),
+                Button("Cancel", variant="default", id="cancel"),
+                id="button-group",
+            )
+
+    def action_confirm(self):
+        self.config.voice = cast(Input, self.query_one("#input-voice")).value
+        self.config.speed = float(cast(Input, self.query_one("#input-speed")).value)
+        pattern = cast(Input, self.query_one("#input-pattern")).value
+        self.config.split_pattern = pattern.replace("\\\\", "\\")
+        log(escaped_pattern=pattern, pattern=self.config.split_pattern)
+        selection = cast(Select[str], self.query_one("#input-device")).value
+        self.config.device = None if isinstance(selection, NoSelection) else selection
+        self.config.trf = cast(Switch, self.query_one("#input-trf")).value
+        self.dismiss(self.config)
+
+    def action_cancel(self):
+        self.dismiss()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "confirm":
+            self.action_confirm()
+        else:
+            self.dismiss()
+
+
 class KokoroApp(App):
     CSS_PATH = "app.tcss"
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -261,6 +420,13 @@ class KokoroApp(App):
             "save",
             "Save",
             tooltip="Save the selected audio to file.",
+            show=True,
+        ),
+        Binding(
+            "c",
+            "config",
+            "Update Config",
+            tooltip="Update Kokoro TTS configurations.",
             show=True,
         ),
         Binding(
@@ -359,6 +525,20 @@ class KokoroApp(App):
 
     def action_seek_right(self):
         self.sound.seek_secs(5)
+
+
+    def action_config(self):
+        self.update_config()
+
+    @work(exclusive=True, group="update_config")
+    async def update_config(self):
+        config = await self.push_screen(
+            ConfigScreen(self.kokoro.get_config()), wait_for_dismiss=True
+        )
+        if config is None:
+            return
+        log("updating config: got config: ", config=config)
+        self.kokoro.set_config(config)
 
     def action_save(self):
         if self.index < 0:

@@ -1,13 +1,14 @@
 import asyncio
 import time
 from abc import ABC
+from copy import deepcopy
 from dataclasses import dataclass
 from multiprocessing import Event as MEvent
 from multiprocessing import Process
 from multiprocessing import Queue as MQueue
 from queue import Empty, Queue
-from threading import Event, Thread
-from typing import List, Optional
+from threading import Event, Lock, Thread
+from typing import Callable, List, Optional, Self, Union
 
 import soundfile
 from kokoro import KModel, KPipeline
@@ -175,31 +176,50 @@ class SoundAgent:
 
 
 class KokoroAgent:
+    class Input(ABC):
+        pass
+
     @dataclass
-    class Input:
-        def __init__(
-            self, text: str, index: Optional[int] = None, overwrite: bool = False
-        ) -> None:
-            self.text = text
-            self.index = index
-            self.overwrite = overwrite
+    class Config:
+        voice: str = "af_heart"
+        speed: Union[float, Callable[[int], float]] = 1.3
+        split_pattern: str = ""
+        trf: bool = False
+        device: Optional[str] = None
+
+        def __post_init__(self):
+            self.lang_code = self.voice[0]
+
+        def compare_pipeline(self, other: Self) -> bool:
+            return (
+                self.lang_code == other.lang_code
+                and self.trf == other.trf
+                and self.device == other.device
+            )
+
+    @dataclass
+    class DataInput(Input):
+        text: str
+        index: Optional[int] = None
+        overwrite: bool = False
+
+    @dataclass
+    class UpdateConfig(Input):
+        config: "KokoroAgent.Config"
 
     @dataclass()
     class Output:
-        def __init__(
-            self,
-            data: FloatTensor,
-            index: Optional[int] = None,
-            overwrite: bool = False,
-        ) -> None:
-            self.data = data
-            self.index = index
-            self.overwrite = overwrite
+        data: FloatTensor
+        index: Optional[int] = None
+        overwrite: bool = False
 
-    def __init__(self):
+    def __init__(self, config: Optional[Config] = None):
         super().__init__()
         self.input_queue = Queue[KokoroAgent.Input]()
         self.output_queue = Queue[KokoroAgent.Output]()
+        self._config = config or KokoroAgent.Config()
+        self._config_lock = Lock()
+        self._pipeline: Optional[KPipeline] = None
         self._stop_event = Event()
         self._cancel_event = Event()
         self._thread = Thread(target=self._run)
@@ -207,35 +227,48 @@ class KokoroAgent:
 
     def _run(self):
         self._model = KModel()
-        self._pipeline_a = KPipeline(lang_code="a", model=self._model)
+        if self._pipeline is None:
+            self._pipeline = KPipeline(lang_code="a", model=self._model)
         while not self._stop_event.is_set():
             try:
                 log("retrieving input...")
                 input = self.input_queue.get(timeout=1)
-                self._cancel_event.clear()
-                log("processing input", input=input)
-                generator = self._pipeline_a(
-                    input.text,
-                    voice="af_heart",
-                    speed=1.3,  # type:ignore
-                    split_pattern="",
-                )
-                for r in generator:
-                    audio = r.audio
-                    if audio is not None:
-                        log("got chunk", len=len(audio))
-                        self.output_queue.put(
-                            KokoroAgent.Output(audio, input.index, input.overwrite)
+                if isinstance(input, KokoroAgent.UpdateConfig):
+                    with self._config_lock:
+                        if self._config.compare_pipeline(input.config):
+                            self._pipeline = KPipeline(
+                                lang_code=input.config.lang_code,
+                                trf=input.config.trf,
+                                device=input.config.device,
+                                model=self._model,
+                            )
+                        self._config = input.config
+                elif isinstance(input, KokoroAgent.DataInput):
+                    self._cancel_event.clear()
+                    log("processing input", input=input)
+                    with self._config_lock:
+                        generator = self._pipeline(
+                            input.text,
+                            voice=self._config.voice,
+                            speed=self._config.speed,
+                            split_pattern=self._config.split_pattern,
                         )
-                    if self._cancel_event.is_set():
-                        log("cancelling task")
-                        self._cancel_event.clear()
-                        break
+                    for r in generator:
+                        audio = r.audio
+                        if audio is not None:
+                            log("got chunk", len=len(audio))
+                            self.output_queue.put(
+                                KokoroAgent.Output(audio, input.index, input.overwrite)
+                            )
+                        if self._cancel_event.is_set():
+                            log("cancelling task")
+                            self._cancel_event.clear()
+                            break
             except Empty:
                 continue
 
     def feed(self, text: str, index: Optional[int] = None, overwrite: bool = False):
-        self.input_queue.put(KokoroAgent.Input(text, index, overwrite))
+        self.input_queue.put(KokoroAgent.DataInput(text, index, overwrite))
 
     def stop(self):
         self._cancel_event.set()
@@ -246,6 +279,14 @@ class KokoroAgent:
 
     def join(self, timeout: Optional[float] = None):
         self._thread.join(timeout)
+
+    def get_config(self):
+        with self._config_lock:
+            # cloning here because I think python cannot enforce reference immutability
+            return deepcopy(self._config)
+
+    def set_config(self, config: Config):
+        self.input_queue.put(KokoroAgent.UpdateConfig(deepcopy(config)))
 
     async def get_outputs(self):
         while not self._stop_event.is_set():
