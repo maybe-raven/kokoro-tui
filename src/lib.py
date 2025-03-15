@@ -2,23 +2,21 @@ import asyncio
 import time
 from abc import ABC
 from dataclasses import dataclass
+from multiprocessing import Event as MEvent
+from multiprocessing import Process
+from multiprocessing import Queue as MQueue
 from queue import Empty, Queue
 from threading import Event, Thread
 from typing import List, Literal, Optional, Union
 
 from kokoro import KModel, KPipeline
 from soundcard import default_speaker
-
-# from textual import log
+from textual import log
 from torch import FloatTensor, Tensor, cat
 
 SAMPLE_RATE = 24000
 BLOCK_SIZE = 512
 SLEEP_TIME = 0.2
-
-
-def log(*args, **kwargs):
-    pass
 
 
 class SoundAgent:
@@ -40,15 +38,15 @@ class SoundAgent:
         secs: float
 
     def __init__(self) -> None:
-        self.input_queue = Queue()
+        self.input_queue: MQueue[SoundAgent.Input] = MQueue()
         self._start = 0
         self._end = BLOCK_SIZE
         self._data: List[Tensor] = []
         self._track_index = None
-        self._is_playing = Event()
+        self._is_playing = MEvent()
         self._is_playing.set()
-        self._stop_event = Event()
-        self._thread = Thread(target=self._run)
+        self._stop_event = MEvent()
+        self._thread = Process(target=self._run)
         self._thread.start()
 
     def _run(self):
@@ -69,12 +67,10 @@ class SoundAgent:
 
     def _get_block(self) -> Optional[Tensor]:
         """Get block to play."""
-        log("getting block", i=self._track_index, N=len(self._data))
         if self._track_index is None or len(self._data) <= self._track_index:
             return None
         track_data = self._data[self._track_index]
         n = len(track_data)
-        log(n=n, range=f"({self._start}..{self._end})")
         if n <= self._start:
             self._seek(n)
             return None
@@ -83,10 +79,8 @@ class SoundAgent:
         return track_data[self._start : self._end]
 
     def _process_input(self):
-        log("processing input: ")
         try:
             input = self.input_queue.get_nowait()
-            log(input=input)
             if isinstance(input, SoundAgent.DataInput):
                 self._add_data(input)
             elif isinstance(input, SoundAgent.ChangeTrack):
@@ -97,16 +91,9 @@ class SoundAgent:
             elif isinstance(input, SoundAgent.SeekSecs):
                 self._seek(self._start + int(SAMPLE_RATE * input.secs))
         except Empty:
-            log("queue empty")
             pass
 
     def _add_data(self, input: DataInput):
-        log(
-            "adding data",
-            index=input.index,
-            overwrite=input.overwrite,
-            len=len(input.data),
-        )
         index = input.index or self._track_index
         n = len(self._data)
         if index is None or n <= index:

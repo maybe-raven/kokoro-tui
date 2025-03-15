@@ -1,10 +1,12 @@
-from typing import ClassVar
+from typing import ClassVar, Type
 
 from pyperclip import paste
 from soundfile import SoundFile
 from textual import log, work
+from textual._path import CSSPathType
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
+from textual.driver import Driver
 from textual.widgets import Footer, Label
 
 from lib import KokoroAgent, SoundAgent
@@ -57,9 +59,19 @@ class KokoroApp(App):
         ),
     ]
 
+    def __init__(
+        self,
+        sound: SoundAgent,
+        driver_class: Type[Driver] | None = None,
+        css_path: CSSPathType | None = None,
+        watch_css: bool = False,
+        ansi_color: bool = False,
+    ):
+        super().__init__(driver_class, css_path, watch_css, ansi_color)
+        self.sound = sound
+
     def on_mount(self):
         self.kokoro = KokoroAgent()
-        self.sound = SoundAgent()
         self.kokoro_listener()
 
     def compose(self) -> ComposeResult:
@@ -100,5 +112,6 @@ class KokoroApp(App):
 
 
 if __name__ == "__main__":
-    app = KokoroApp()
+    sound = SoundAgent()
+    app = KokoroApp(sound)
     app.run()
