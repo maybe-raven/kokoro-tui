@@ -4,9 +4,9 @@ from datetime import datetime
 from typing import ClassVar, Type, cast
 
 from pyperclip import paste
-from soundfile import SoundFile
 from textual import log, on, work
 from textual._path import CSSPathType
+from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Grid, Horizontal, HorizontalGroup, VerticalGroup
@@ -394,6 +394,12 @@ class KokoroApp(App):
     CSS_PATH = "app.tcss"
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding(
+            "?",
+            "toggle_help_panel",
+            "Help",
+            show=True,
+        ),
+        Binding(
             "q",
             "quit",
             "Quit",
@@ -430,25 +436,67 @@ class KokoroApp(App):
             show=True,
         ),
         Binding(
+            "J",
+            "cursor_down",
+            "Down",
+            tooltip="Move the cursor down in the history list.",
+            show=False,
+        ),
+        Binding(
+            "K",
+            "cursor_up",
+            "Up",
+            tooltip="Move the cursor up in the history list.",
+            show=False,
+        ),
+        Binding(
+            "j",
+            "scroll_down",
+            "Down",
+            tooltip="Scroll down one line in the text view.",
+            show=False,
+        ),
+        Binding(
+            "k",
+            "scroll_up",
+            "Up",
+            tooltip="Scroll up one line in the text view.",
+            show=False,
+        ),
+        Binding(
+            "ctrl+f",
+            "page_down",
+            "Page Down",
+            tooltip="Scroll down one page in the text view.",
+            show=False,
+        ),
+        Binding(
+            "ctrl+b",
+            "page_up",
+            "Page Up",
+            tooltip="Scroll up one page in the text view.",
+            show=False,
+        ),
+        Binding(
+            "ctrl+d",
+            "half_page_down",
+            "Half Page Down",
+            tooltip="Scroll down half page in the text view.",
+            show=False,
+        ),
+        Binding(
+            "ctrl+u",
+            "half_page_up",
+            "Half Page Up",
+            tooltip="Scroll up half page in the text view.",
+            show=False,
+        ),
+        Binding(
             "c",
             "config",
             "Update Config",
             tooltip="Update Kokoro TTS configurations.",
             show=True,
-        ),
-        Binding(
-            "space",
-            "toggle_pp",
-            "Play/Pause",
-            tooltip="Toggle play / pause.",
-            show=True,
-        ),
-        Binding(
-            "t",
-            "test",
-            "Test Sound",
-            tooltip="Read a sample audio file to test the SoundAgent.",
-            show=False,
         ),
         Binding(
             "h",
@@ -462,6 +510,13 @@ class KokoroApp(App):
             "seek_right",
             "+5s",
             tooltip="Seek forward 5 seconds.",
+            show=True,
+        ),
+        Binding(
+            "space",
+            "toggle_pp",
+            "Play/Pause",
+            tooltip="Toggle play / pause.",
             show=True,
         ),
     ]
@@ -489,7 +544,9 @@ class KokoroApp(App):
         self.kokoro_listener()
 
     def compose(self) -> ComposeResult:
-        with Horizontal():
+        horizontal = Horizontal()
+        horizontal.can_focus_children = False
+        with horizontal:
             yield AudioList()
             yield SourceView()
         yield Footer()
@@ -517,12 +574,6 @@ class KokoroApp(App):
         self.texts[self.index] += text
         self.kokoro.feed(text=text, index=self.index)
         self.query_one(SourceView).write(text)
-
-    def action_test(self):
-        with SoundFile("test-data/test.wav") as sf:
-            data = sf.read()
-            log(samplerate=sf.samplerate, len=len(data))
-            self.sound.feed(data, overwrite=True)  # type: ignore
 
     def action_toggle_pp(self):
         self.sound.toggle_pp()
@@ -589,6 +640,50 @@ class KokoroApp(App):
             self.sound.change_track(i)
             self.index = i
             self.query_one(SourceView).clear().write(self.texts[self.index])
+
+    def action_cursor_down(self):
+        self.query_one(ListView).action_cursor_down()
+
+    def action_cursor_up(self):
+        self.query_one(ListView).action_cursor_up()
+
+    def action_scroll_down(self):
+        self.query_one(SourceView).action_scroll_down()
+
+    def action_scroll_up(self):
+        self.query_one(SourceView).action_scroll_up()
+
+    def action_page_down(self):
+        self.query_one(SourceView).action_page_down()
+
+    def action_page_up(self):
+        self.query_one(SourceView).action_page_up()
+
+    def action_half_page_down(self):
+        view = self.query_one(SourceView)
+        if not view.allow_vertical_scroll:
+            raise SkipAction()
+        view._user_scroll_interrupt = True
+        view._clear_anchor()
+        view.scroll_to(
+            y=view.scroll_y + view.scrollable_content_region.height // 2,
+        )
+
+    def action_half_page_up(self):
+        view = self.query_one(SourceView)
+        if not view.allow_vertical_scroll:
+            raise SkipAction()
+        view._user_scroll_interrupt = True
+        view._clear_anchor()
+        view.scroll_to(
+            y=view.scroll_y - view.scrollable_content_region.height // 2,
+        )
+
+    def action_toggle_help_panel(self):
+        if self.screen.query("HelpPanel"):
+            self.action_hide_help_panel()
+        else:
+            self.action_show_help_panel()
 
     async def action_quit(self) -> None:
         self.kokoro.stop()
