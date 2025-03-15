@@ -416,6 +416,13 @@ class KokoroApp(App):
             show=True,
         ),
         Binding(
+            "r",
+            "regenerate",
+            "Regenerate",
+            tooltip="Regenerate an audio.",
+            show=True,
+        ),
+        Binding(
             "s",
             "save",
             "Save",
@@ -473,7 +480,7 @@ class KokoroApp(App):
         self.texts = []
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if self.index < 0 and action in ["append", "save"]:
+        if self.index < 0 and action in ["append", "save", "regenerate"]:
             return None
         return super().check_action(action, parameters)
 
@@ -526,6 +533,13 @@ class KokoroApp(App):
     def action_seek_right(self):
         self.sound.seek_secs(5)
 
+    def action_regenerate(self):
+        if self.index < 0:
+            return
+        text = self.texts[self.index]
+        log("regenerating", text=text, index=self.index)
+        self.kokoro.cancel()
+        self.kokoro.feed(text=text, index=self.index, overwrite=True)
 
     def action_config(self):
         self.update_config()

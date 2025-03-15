@@ -253,13 +253,17 @@ class KokoroAgent:
                             speed=self._config.speed,
                             split_pattern=self._config.split_pattern,
                         )
+                    first_chunk = True
                     for r in generator:
                         audio = r.audio
                         if audio is not None:
                             log("got chunk", len=len(audio))
                             self.output_queue.put(
-                                KokoroAgent.Output(audio, input.index, input.overwrite)
+                                KokoroAgent.Output(
+                                    audio, input.index, input.overwrite and first_chunk
+                                )
                             )
+                            first_chunk = False
                         if self._cancel_event.is_set():
                             log("cancelling task")
                             self._cancel_event.clear()
