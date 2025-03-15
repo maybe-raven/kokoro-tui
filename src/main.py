@@ -537,6 +537,13 @@ class KokoroApp(App):
             tooltip="Toggle play / pause.",
             show=True,
         ),
+        Binding(
+            "m",
+            "toggle_side_panel",
+            "Toggle Side Panel",
+            tooltip="Toggle side panel.",
+            show=True,
+        ),
     ]
 
     def __init__(
@@ -611,6 +618,10 @@ class KokoroApp(App):
         self.update_loading_indicator(True)
         self.kokoro.feed(text=text, index=self.index, generation=self.generation)
         self.query_one(SourceView).write(text)
+
+    def action_toggle_side_panel(self):
+        panel = self.query_one(AudioList)
+        panel.display = not panel.display
 
     def action_toggle_pp(self):
         self.sound.toggle_pp()
