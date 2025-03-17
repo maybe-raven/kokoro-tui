@@ -1,9 +1,9 @@
 # kokoro-tui
 
-A simple TUI for [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) built with [Textual](http://textual.textualize.io).
+A simple TUI for on-device inference with [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) built with [Textual](http://textual.textualize.io).
 
 Features:
-- Generate audio from system clipboard or text files.
+- Generate audio locally from system clipboard or text files.
 - Play generated audio in-memory.
 - Save generated audio to file.
 - View audio generation history (in-memory only for now).
