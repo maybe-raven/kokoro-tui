@@ -196,7 +196,7 @@ class KokoroAgent:
     class Config:
         voice: str = "af_heart"
         speed: Union[float, Callable[[int], float]] = 1.3
-        split_pattern: str = ""
+        split_pattern: str = "\n"
         trf: bool = False
         device: Optional[str] = None
 
