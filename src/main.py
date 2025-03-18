@@ -1,5 +1,7 @@
 import asyncio
 import os
+import sys
+from argparse import ArgumentParser, Namespace
 from datetime import datetime
 from typing import ClassVar, Type, cast
 
@@ -531,6 +533,7 @@ class KokoroApp(App):
     def __init__(
         self,
         sound: SoundAgent,
+        args: Namespace,
         driver_class: Type[Driver] | None = None,
         css_path: CSSPathType | None = None,
         watch_css: bool = False,
@@ -540,15 +543,18 @@ class KokoroApp(App):
         self.sound = sound
         self.index = -1
         self.texts = []
+        self.args = args
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if self.index < 0 and action in ["append", "save", "regenerate"]:
             return None
         return super().check_action(action, parameters)
 
-    def on_mount(self):
+    async def on_mount(self):
         self.kokoro = KokoroAgent()
         self.kokoro_listener()
+        if self.args.new:
+            await self.make_audio(get_text_from_paste())
 
     def compose(self) -> ComposeResult:
         horizontal = Horizontal()
@@ -740,6 +746,13 @@ class KokoroApp(App):
 
 
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument(
+        "-n",
+        "--new",
+        action="store_true",
+        help="Immediately start generating a new audio from clipboard.",
+    )
     sound = SoundAgent()
-    app = KokoroApp(sound)
+    app = KokoroApp(sound, parser.parse_args(sys.argv[1:]))
     app.run()
