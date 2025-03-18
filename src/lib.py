@@ -222,6 +222,7 @@ class KokoroAgent:
         self._pipeline: Optional[KPipeline] = None
         self._stop_event = Event()
         self._cancel_event = Event()
+        self._is_processing_event = Event()
         self._thread = Thread(target=self._run)
         self._thread.start()
 
@@ -245,6 +246,7 @@ class KokoroAgent:
                         self._config = input.config
                 elif isinstance(input, KokoroAgent.DataInput):
                     self._cancel_event.clear()
+                    self._is_processing_event.set()
                     log("processing input", input=input)
                     with self._config_lock:
                         generator = self._pipeline(
@@ -268,6 +270,7 @@ class KokoroAgent:
                             log("cancelling task")
                             self._cancel_event.clear()
                             break
+                    self._is_processing_event.clear()
             except Empty:
                 continue
 
@@ -291,6 +294,9 @@ class KokoroAgent:
 
     def set_config(self, config: Config):
         self.input_queue.put(KokoroAgent.UpdateConfig(deepcopy(config)))
+
+    def is_processing(self) -> bool:
+        return self._is_processing_event.is_set()
 
     async def get_outputs(self):
         while not self._stop_event.is_set():

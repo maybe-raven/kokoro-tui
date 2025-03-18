@@ -3,7 +3,7 @@ import os
 import sys
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
-from typing import ClassVar, Type, cast
+from typing import ClassVar, Optional, Type, cast
 
 from pyperclip import paste
 from textual import log, on, work
@@ -12,6 +12,7 @@ from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Grid, Horizontal, HorizontalGroup, VerticalGroup
+from textual.css.query import NoMatches
 from textual.driver import Driver
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -24,6 +25,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    LoadingIndicator,
     RichLog,
     Select,
     Switch,
@@ -563,11 +565,23 @@ class KokoroApp(App):
             yield AudioList()
             yield SourceView()
         yield Footer()
+        loading = LoadingIndicator()
+        loading.display = False
+        yield loading
+
+    def update_loading_indicator(self, visibility: Optional[bool] = None):
+        try:
+            self.query_one(LoadingIndicator).display = (
+                visibility or self.kokoro.is_processing()
+            )
+        except NoMatches:
+            pass
 
     @work(exclusive=True, group="kokoro")
     async def kokoro_listener(self):
         async for chunk in self.kokoro.get_outputs():
             self.sound.feed(chunk.data, chunk.index, chunk.overwrite)
+            self.update_loading_indicator()
 
     async def action_new(self):
         await self.make_audio(get_text_from_paste())
@@ -578,6 +592,7 @@ class KokoroApp(App):
             return
         text = get_text_from_paste()
         self.texts[self.index] += text
+        self.update_loading_indicator(True)
         self.kokoro.feed(text=text, index=self.index)
         self.query_one(SourceView).write(text)
 
@@ -593,10 +608,11 @@ class KokoroApp(App):
     def action_regenerate(self):
         if self.index < 0:
             return
+        self.kokoro.cancel()
         text = self.texts[self.index]
         log("regenerating", text=text, index=self.index)
-        self.kokoro.cancel()
         self.kokoro.feed(text=text, index=self.index, overwrite=True)
+        self.update_loading_indicator(True)
 
     def action_config(self):
         self.update_config()
@@ -644,6 +660,7 @@ class KokoroApp(App):
         if i is not None and i != self.index:
             self.kokoro.cancel()
             self.sound.change_track(i)
+            self.update_loading_indicator(False)
             self.index = i
             self.query_one(SourceView).clear().write(self.texts[self.index])
 
@@ -731,6 +748,7 @@ class KokoroApp(App):
     async def make_audio(self, text: str):
         self.kokoro.cancel()
         self.index = len(self.texts)
+        self.update_loading_indicator(True)
         self.kokoro.feed(text=text, index=self.index)
         self.texts.append(text)
         self.refresh_bindings()

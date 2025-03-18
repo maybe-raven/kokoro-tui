@@ -81,3 +81,26 @@ ConfigScreen {
 Button {
     width: 100%;
 }
+
+KokoroApp {
+    layers: lower upper;
+
+    Horizontal {
+        layer: lower;
+    }
+
+    Footer {
+        layer: lower;
+    }
+
+    LoadingIndicator {
+        layer: upper;
+        dock: right;
+        offset: -4 1;
+        color: red;
+        height: 1;
+        width: 11;
+        background: $background 0%;
+        content-align-horizontal: center;
+    }
+}
