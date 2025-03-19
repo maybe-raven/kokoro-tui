@@ -350,7 +350,7 @@ class ConfigScreen(ModalScreen[KokoroAgent.Config]):
             )
             yield Label("split pattern")
             yield Input(
-                value=self.config.split_pattern.replace("\\", "\\\\"),
+                value=self.config.split_pattern.replace("\n", "\\n"),
                 id="input-pattern",
             )
             yield Label("device")
@@ -373,7 +373,7 @@ class ConfigScreen(ModalScreen[KokoroAgent.Config]):
         self.config.voice = cast(Input, self.query_one("#input-voice")).value
         self.config.speed = float(cast(Input, self.query_one("#input-speed")).value)
         pattern = cast(Input, self.query_one("#input-pattern")).value
-        self.config.split_pattern = pattern.replace("\\\\", "\\")
+        self.config.split_pattern = pattern.replace("\\n", "\n")
         log(escaped_pattern=pattern, pattern=self.config.split_pattern)
         selection = cast(Select[str], self.query_one("#input-device")).value
         self.config.device = None if isinstance(selection, NoSelection) else selection
