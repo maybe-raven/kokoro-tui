@@ -104,3 +104,8 @@ KokoroApp {
         content-align-horizontal: center;
     }
 }
+
+HelpPanel {
+    min-width: 60;
+    max-width: 50%;
+}
