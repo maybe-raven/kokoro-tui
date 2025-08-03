@@ -1,7 +1,9 @@
 import asyncio
+import json
 import os
 import sys
 from argparse import ArgumentParser, Namespace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar, Optional, Self, Type, cast
 
@@ -594,7 +596,8 @@ class KokoroApp(App):
         self.kokoro = KokoroAgent()
         self.kokoro_listener()
         if self.args.new:
-            await self.make_audio(get_text_from_paste())
+            await self.make_audio(get_text_from_paste(), False)
+        self.run_server()
 
     def compose(self) -> ComposeResult:
         horizontal = Horizontal()
@@ -615,6 +618,28 @@ class KokoroApp(App):
         except NoMatches:
             pass
 
+    @work(exclusive=True, group="server")
+    async def run_server(self):
+        if not callable(asyncio.start_unix_server):
+            return
+
+        server = await asyncio.start_unix_server(self.handle_client, "/tmp/kokoro-tui")
+        async with server:
+            await server.serve_forever()
+
+    async def handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
+        data = await reader.read()
+        message = json.loads(data)
+        try:
+            message = SocketMsg(**message)
+            await self.make_audio(message.content, message.append)
+        except TypeError:
+            pass
+
+        writer.close()
+
     @work(exclusive=True, group="kokoro")
     async def kokoro_listener(self):
         async for chunk in self.kokoro.get_outputs():
@@ -630,17 +655,10 @@ class KokoroApp(App):
             self.update_loading_indicator()
 
     async def action_new(self):
-        await self.make_audio(get_text_from_paste())
+        await self.make_audio(get_text_from_paste(), False)
 
     async def action_append(self):
-        if self.index < 0:
-            await self.action_new()
-            return
-        text = get_text_from_paste()
-        self.texts[self.index] += text
-        self.update_loading_indicator(True)
-        self.kokoro.feed(text=text, index=self.index, generation=self.generation)
-        self.query_one(SourceView).write_str(text)
+        await self.make_audio(get_text_from_paste(), True)
 
     def action_toggle_side_panel(self):
         panel = self.query_one(AudioList)
@@ -783,7 +801,7 @@ class KokoroApp(App):
         try:
             with open(filepath, mode="r", encoding="utf-8") as f:
                 text = f.read()
-            await self.make_audio(text)
+            await self.make_audio(text, False)
         except FileNotFoundError:
             self.notify(
                 f"Error: The file '{filepath}' does not exist.", severity="error"
@@ -809,15 +827,20 @@ class KokoroApp(App):
                 severity="error",
             )
 
-    async def make_audio(self, text: str):
-        self.kokoro.cancel()
-        self.index = len(self.texts)
+    async def make_audio(self, text: str, append: bool):
+        if not append or self.index < 0:
+            self.kokoro.cancel()
+            self.index = len(self.texts)
+            self.kokoro.feed(text=text, index=self.index, generation=self.generation)
+            self.texts.append(text)
+            self.refresh_bindings()
+            self.query_one(SourceView).overwrite(text)
+            await self.query_one(AudioList).append(text)
+        else:
+            self.kokoro.feed(text=text, index=self.index, generation=self.generation)
+            self.texts[self.index] += "\n" + text
+            self.query_one(SourceView).write_str(text)
         self.update_loading_indicator(True)
-        self.kokoro.feed(text=text, index=self.index, generation=self.generation)
-        self.texts.append(text)
-        self.refresh_bindings()
-        self.query_one(SourceView).overwrite(text)
-        await self.query_one(AudioList).append(text)
 
     async def action_quit(self) -> None:
         self.kokoro.stop()
@@ -825,6 +848,12 @@ class KokoroApp(App):
         self.kokoro.join()
         self.sound.join()
         return await super().action_quit()
+
+
+@dataclass
+class SocketMsg:
+    append: bool
+    content: str
 
 
 if __name__ == "__main__":
