@@ -701,6 +701,7 @@ class KokoroApp(App):
         if not filepath:
             return
         log("saving audio: got filepath: ", filepath=filepath)
+        filepath = os.path.expanduser(filepath)
         if os.path.isfile(filepath):
             confirmation = await self.push_screen(
                 ConfirmationScreen(filepath), wait_for_dismiss=True
@@ -778,6 +779,7 @@ class KokoroApp(App):
         filepath = await self.push_screen(FilepathInput(), wait_for_dismiss=True)
         if not filepath:
             return
+        filepath = os.path.expanduser(filepath)
         try:
             with open(filepath, mode="r", encoding="utf-8") as f:
                 text = f.read()
