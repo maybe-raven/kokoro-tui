@@ -3,7 +3,7 @@ import os
 import sys
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
-from typing import ClassVar, Optional, Type, cast
+from typing import ClassVar, Optional, Self, Type, cast
 
 from pyperclip import paste
 from textual import log, on, work
@@ -14,6 +14,7 @@ from textual.binding import Binding, BindingType
 from textual.containers import Grid, Horizontal, HorizontalGroup, VerticalGroup
 from textual.css.query import NoMatches
 from textual.driver import Driver
+from textual.events import Resize
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.validation import ValidationResult, Validator
@@ -64,7 +65,7 @@ class SourceView(RichLog):
     def __init__(
         self,
         *,
-        min_width: int = 78,
+        min_width: int = 0,
         auto_scroll: bool = True,
         name: str | None = None,
         id: str | None = None,
@@ -83,6 +84,28 @@ class SourceView(RichLog):
             classes=classes,
             disabled=disabled,
         )
+        self.text = None
+
+    def write_str(self, content: str) -> Self:
+        if self.text is None:
+            self.text = content
+        else:
+            self.text += content
+        return self.write(content)
+
+    def clear(self) -> Self:
+        self.text = None
+        return super().clear()
+
+    def overwrite(self, content) -> Self:
+        self.clear()
+        self.text = content
+        return self.write(content)
+
+    def on_resize(self, event: Resize):
+        super().on_resize(event)
+        if self.text is not None:
+            self.overwrite(self.text)
 
 
 class HumanizedTimeLabel(Widget):
@@ -617,7 +640,7 @@ class KokoroApp(App):
         self.texts[self.index] += text
         self.update_loading_indicator(True)
         self.kokoro.feed(text=text, index=self.index, generation=self.generation)
-        self.query_one(SourceView).write(text)
+        self.query_one(SourceView).write_str(text)
 
     def action_toggle_side_panel(self):
         panel = self.query_one(AudioList)
@@ -701,7 +724,7 @@ class KokoroApp(App):
             self.sound.change_track(i)
             self.update_loading_indicator(False)
             self.index = i
-            self.query_one(SourceView).clear().write(self.texts[self.index])
+            self.query_one(SourceView).overwrite(self.texts[self.index])
 
     def action_cursor_down(self):
         self.query_one(ListView).action_cursor_down()
@@ -791,7 +814,7 @@ class KokoroApp(App):
         self.kokoro.feed(text=text, index=self.index, generation=self.generation)
         self.texts.append(text)
         self.refresh_bindings()
-        self.query_one(SourceView).clear().write(text)
+        self.query_one(SourceView).overwrite(text)
         await self.query_one(AudioList).append(text)
 
     async def action_quit(self) -> None:
