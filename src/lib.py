@@ -11,25 +11,27 @@ from multiprocessing import Process
 from multiprocessing import Queue as MQueue
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
-from typing import Callable, List, Optional, Self, Union
+from typing import List, Optional, Self
 
 import soundfile
 from kokoro import KModel, KPipeline
+from numpy import concatenate
+from numpy._typing import NDArray
 from soundcard import default_speaker
 from textual import log
-from torch import FloatTensor, Tensor, cat
-
+from torch import FloatTensor, Tensor
 
 SAMPLE_RATE = 24000
 BLOCK_SIZE = 512
-SLEEP_TIME = 0.2
+SLEEP_TIME = 0.3
 
 CONFIG_FILEPATH = "~/.config/kokoro-tui/config.json"
 
 
 class SoundAgent:
     class Input(ABC):
-        pass
+        def apply(self, agent: "SoundAgent", player):
+            pass
 
     @dataclass
     class DataInput(Input):
@@ -37,21 +39,78 @@ class SoundAgent:
         index: int
         overwrite: bool = False
 
+        def apply(self, agent: "SoundAgent", player):
+            index = self.index
+            n = len(agent._data)
+            input_data = self.data.numpy()
+            if n <= index:
+                agent._data.append(input_data)
+                agent._track_index = n
+                agent._seek_and_play(0, player)
+            elif self.overwrite:
+                agent._data[index] = input_data
+                agent._seek_and_play(0, player)
+            else:
+                agent._data[index] = concatenate((agent._data[index], input_data))
+                if player is not None:
+                    player.play(input_data, wait=False)
+
     @dataclass
     class ChangeTrack(Input):
         index: int
+
+        def apply(self, agent: "SoundAgent", player):
+            if len(agent._data) <= self.index:
+                agent._track_index = len(agent._data) - 1
+            else:
+                agent._track_index = self.index
+            agent._seek_and_play(0, player)
 
     @dataclass
     class SeekSecs(Input):
         secs: float
 
+        def apply(self, agent: "SoundAgent", player):
+            if agent._start_timestamp is None:
+                agent._seek_and_play(
+                    int(self.secs * SAMPLE_RATE) + agent._start_index, player
+                )
+            else:
+                assert player is not None
+                agent._seek_and_play(
+                    int(
+                        (time.time() - agent._start_timestamp + self.secs) * SAMPLE_RATE
+                    )
+                    + agent._start_index,
+                    player,
+                )
+
     @dataclass
     class Save(Input):
         path: str
 
+        def apply(self, agent: "SoundAgent", player):
+            if agent._track_index is None:
+                return
+            try:
+                soundfile.write(
+                    self.path,
+                    data=agent._data[agent._track_index],
+                    samplerate=SAMPLE_RATE,
+                )
+                agent.output_queue.put(SoundAgent.Output())
+            except Exception as e:
+                agent.output_queue.put(SoundAgent.Output(e))
+
     @dataclass
     class ClearHistory(Input):
         pass
+
+        def apply(self, agent: "SoundAgent", player):
+            agent._data.clear()
+            agent._start_index = 0
+            agent._start_timestamp = None
+            agent._track_index = -1
 
     @dataclass
     class Output:
@@ -59,104 +118,66 @@ class SoundAgent:
 
     def __init__(self) -> None:
         self.input_queue: MQueue[SoundAgent.Input] = MQueue()
-        self._start = 0
-        self._end = BLOCK_SIZE
-        self._data: List[Tensor] = []
+        self.output_queue: MQueue[SoundAgent.Output] = MQueue()
+        self._start_index = 0
+        self._start_timestamp = None
+        self._data: List[NDArray] = []
         self._track_index = -1
         self._is_playing = MEvent()
         self._is_playing.set()
-        self.output_queue: MQueue[SoundAgent.Output] = MQueue()
         self._stop_event = MEvent()
         self._thread = Process(target=self._run)
         self._thread.start()
 
     def _run(self):
-        with default_speaker().player(
-            samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE
-        ) as player:
-            while not self._stop_event.is_set():
-                self._process_input()
-                if self._is_playing.is_set():
-                    block = self._get_block()
-                    if block is None:
-                        time.sleep(SLEEP_TIME)
-                    else:
-                        player.play(block)
-                        self._seek(self._start + BLOCK_SIZE)
-                else:
-                    time.sleep(SLEEP_TIME)
+        while not self._stop_event.is_set():
+            if self._should_play():
+                with default_speaker().player(
+                    samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE
+                ) as player:
+                    self._seek_and_play(self._start_index, player, False)
 
-    def _get_block(self) -> Optional[Tensor]:
-        """Get block to play."""
-        if self._track_index < 0 or len(self._data) <= self._track_index:
-            return None
-        track_data = self._data[self._track_index]
-        n = len(track_data)
-        if n <= self._start:
-            self._seek(n)
-            return None
-        if n < self._end:
-            self._end = n
-        return track_data[self._start : self._end]
+                    while self._should_play():
+                        self._process_input(player)
+                        if not player._queue and self._start_timestamp is not None:
+                            self._start_index = len(self._data[self._track_index])
+                            self._start_timestamp = None
 
-    def _process_input(self):
+                    self._sync_start_index()
+            else:
+                self._process_input(None)
+
+    def _process_input(self, player):
         try:
             input = self.input_queue.get_nowait()
-            if isinstance(input, SoundAgent.DataInput):
-                self._add_data(input)
-            elif isinstance(input, SoundAgent.ChangeTrack):
-                if len(self._data) <= input.index:
-                    self._track_index = len(self._data) - 1
-                else:
-                    self._track_index = input.index
-                self._seek(0)
-            elif isinstance(input, SoundAgent.SeekSecs):
-                self._seek(self._start + int(SAMPLE_RATE * input.secs))
-            elif isinstance(input, SoundAgent.Save):
-                self._save(input.path)
-            elif isinstance(input, SoundAgent.ClearHistory):
-                self._clear_history()
+            input.apply(self, player)
         except Empty:
-            pass
+            time.sleep(SLEEP_TIME)
 
-    def _clear_history(self):
-        self._data.clear()
-        self._seek(0)
-        self._track_index = -1
+    def _should_play(self) -> bool:
+        return self._track_index >= 0 and self._is_playing.is_set()
 
-    def _add_data(self, input: DataInput):
-        index = input.index
-        n = len(self._data)
-        if n <= index:
-            self._data.append(input.data)
-            self._track_index = n
-            self._seek(0)
-        elif input.overwrite:
-            self._data[index] = input.data
-            self._seek(0)
-        else:
-            self._data[index] = cat((self._data[index], input.data))
+    def _seek_and_play(self, start_index: int, player, clear: bool = True):
+        self._start_index = 0 if start_index < 0 else start_index
+        if player is not None:
+            self._start_timestamp = time.time()
+            if clear:
+                player._queue.clear()
+            player.play(self._data[self._track_index][self._start_index :], wait=False)
 
-    def _seek(self, target: int):
-        self._start = 0 if target < 0 else target
-        self._end = self._start + BLOCK_SIZE
-
-    def _save(self, path: str):
-        if self._track_index is None:
-            return
-        try:
-            soundfile.write(
-                path, data=self._data[self._track_index], samplerate=SAMPLE_RATE
+    def _sync_start_index(self):
+        if self._start_timestamp is not None:
+            self._start_index += int(
+                (time.time() - self._start_timestamp) * SAMPLE_RATE
             )
-            self.output_queue.put(SoundAgent.Output())
-        except Exception as e:
-            self.output_queue.put(SoundAgent.Output(e))
+            self._start_timestamp = None
 
     def save(self, path: str):
         self.input_queue.put(SoundAgent.Save(path))
 
     def stop(self):
         self._stop_event.set()
+        self._is_playing.clear()
 
     def join(self):
         self._thread.join()
