@@ -281,7 +281,6 @@ class KokoroAgent:
         self.output_queue = Queue[KokoroAgent.Output]()
         self._config = config
         self._config_lock = Lock()
-        self._pipeline: Optional[KPipeline] = None
         self._stop_event = Event()
         self._cancel_event = Event()
         self._is_processing_event = Event()
@@ -290,14 +289,18 @@ class KokoroAgent:
 
     def _run(self):
         self._model = KModel()
-        if self._pipeline is None:
-            self._pipeline = KPipeline(lang_code="a", model=self._model)
+        self._pipeline = KPipeline(
+            lang_code=self._config.lang_code,
+            trf=self._config.trf,
+            device=self._config.device,
+            model=self._model,
+        )
         while not self._stop_event.is_set():
             try:
                 input = self.input_queue.get(timeout=1)
                 if isinstance(input, KokoroAgent.UpdateConfig):
                     with self._config_lock:
-                        if self._config.compare_pipeline(input.config):
+                        if not self._config.compare_pipeline(input.config):
                             self._pipeline = KPipeline(
                                 lang_code=input.config.lang_code,
                                 trf=input.config.trf,
