@@ -87,7 +87,7 @@ class SoundAgent:
             try:
                 soundfile.write(
                     self.path,
-                    data=agent._data[agent._track_index],
+                    data=agent._get_data(),
                     samplerate=SAMPLE_RATE,
                 )
                 agent.output_queue.put(SoundAgent.Output())
@@ -138,7 +138,7 @@ class SoundAgent:
                 self._process_input(player)
                 if not player._queue:
                     assert self._start_timestamp is not None
-                    self._start_index = len(self._data[self._track_index])
+                    self._start_index = len(self._get_data())
                     self._start_timestamp = None
                     return
 
@@ -158,17 +158,24 @@ class SoundAgent:
     def _should_play(self) -> bool:
         return (
             self._track_index >= 0
-            and self._start_index < len(self._data[self._track_index])
+            and self._start_index < len(self._get_data())
             and self._is_playing.is_set()
         )
 
     def _seek_and_play(self, start_index: int, player, clear: bool = True):
         self._start_index = 0 if start_index < 0 else start_index
+        n = len(self._get_data())
+        if self._start_index >= n:
+            self._start_index = n
+            return
         if player is not None:
             self._start_timestamp = time.time()
             if clear:
                 player._queue.clear()
-            player.play(self._data[self._track_index][self._start_index :], wait=False)
+            player.play(self._get_data()[self._start_index :], wait=False)
+
+    def _get_data(self) -> NDArray:
+        return self._data[self._track_index]
 
     def save(self, path: str):
         self.input_queue.put(SoundAgent.Save(path))
