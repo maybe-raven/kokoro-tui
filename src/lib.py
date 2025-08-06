@@ -132,20 +132,29 @@ class SoundAgent:
     def _run(self):
         while not self._stop_event.is_set():
             if self._should_play():
-                with default_speaker().player(
-                    samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE
-                ) as player:
-                    self._seek_and_play(self._start_index, player, False)
-
-                    while self._should_play():
-                        self._process_input(player)
-                        if not player._queue and self._start_timestamp is not None:
-                            self._start_index = len(self._data[self._track_index])
-                            self._start_timestamp = None
-
-                    self._sync_start_index()
+                self._run_inner()
             else:
                 self._process_input(None)
+
+    def _run_inner(self):
+        with default_speaker().player(
+            samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE
+        ) as player:
+            self._seek_and_play(self._start_index, player, False)
+
+            while self._should_play():
+                self._process_input(player)
+                if not player._queue:
+                    assert self._start_timestamp is not None
+                    self._start_index = len(self._data[self._track_index])
+                    self._start_timestamp = None
+                    return
+
+            if self._start_timestamp is not None:
+                self._start_index += int(
+                    (time.time() - self._start_timestamp) * SAMPLE_RATE
+                )
+                self._start_timestamp = None
 
     def _process_input(self, player):
         try:
@@ -155,7 +164,11 @@ class SoundAgent:
             time.sleep(SLEEP_TIME)
 
     def _should_play(self) -> bool:
-        return self._track_index >= 0 and self._is_playing.is_set()
+        return (
+            self._track_index >= 0
+            and self._start_index < len(self._data[self._track_index])
+            and self._is_playing.is_set()
+        )
 
     def _seek_and_play(self, start_index: int, player, clear: bool = True):
         self._start_index = 0 if start_index < 0 else start_index
@@ -164,13 +177,6 @@ class SoundAgent:
             if clear:
                 player._queue.clear()
             player.play(self._data[self._track_index][self._start_index :], wait=False)
-
-    def _sync_start_index(self):
-        if self._start_timestamp is not None:
-            self._start_index += int(
-                (time.time() - self._start_timestamp) * SAMPLE_RATE
-            )
-            self._start_timestamp = None
 
     def save(self, path: str):
         self.input_queue.put(SoundAgent.Save(path))
