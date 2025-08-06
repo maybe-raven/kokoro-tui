@@ -620,12 +620,9 @@ class KokoroApp(App):
         yield loading
 
     def update_loading_indicator(self, visibility: Optional[bool] = None):
-        try:
-            self.query_one(LoadingIndicator).display = (
-                visibility or self.kokoro.is_processing()
-            )
-        except NoMatches:
-            pass
+        self.screen_stack[0].query_one(LoadingIndicator).display = (
+            visibility or self.kokoro.is_processing()
+        )
 
     @work(exclusive=True, group="server")
     async def run_server(self):
@@ -843,12 +840,12 @@ class KokoroApp(App):
             self.kokoro.feed(text=text, index=self.index, generation=self.generation)
             self.texts.append(text)
             self.refresh_bindings()
-            self.query_one(SourceView).overwrite(text)
-            await self.query_one(AudioList).append(text)
+            self.screen_stack[0].query_one(SourceView).overwrite(text)
+            await self.screen_stack[0].query_one(AudioList).append(text)
         else:
             self.kokoro.feed(text=text, index=self.index, generation=self.generation)
             self.texts[self.index] += "\n" + text
-            self.query_one(SourceView).write_str(text)
+            self.screen_stack[0].query_one(SourceView).write_str(text)
         self.update_loading_indicator(True)
 
     async def action_quit(self) -> None:
