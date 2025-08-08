@@ -17,3 +17,8 @@ dependencies = [
 dev = [
     "textual-dev>=1.7.0",
 ]
+
+[project.optional-dependencies]
+zh = [
+    "misaki[zh]"
+]

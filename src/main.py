@@ -20,7 +20,7 @@ from textual.widgets import (
     LoadingIndicator,
 )
 
-from lib.agents.kokoro import KokoroAgent
+from lib.agents.kokoro import Config, DataInput, KokoroAgent
 from lib.agents.sound import SoundAgent
 from lib.screens import ConfigScreen, ConfirmationScreen, FilepathInput
 from lib.widgets import AudioList, SourceView
@@ -28,8 +28,6 @@ from lib.widgets import AudioList, SourceView
 
 def get_text_from_paste():
     text = paste()
-    if not text.endswith("\n"):
-        text += "\n"
     return text
 
 
@@ -208,12 +206,13 @@ class KokoroApp(App):
 
     async def on_mount(self):
         try:
-            config = KokoroAgent.Config.load()
+            config = Config.load()
         except PermissionError as e:
             self.notify(f"Error: failed to read config file: {e}.")
-            config = KokoroAgent.Config()
+            config = Config()
         self.kokoro = KokoroAgent(config)
         self.kokoro_listener()
+        self.sound_listener()
         if self.args.new:
             await self.make_audio(get_text_from_paste(), False)
         self.run_server()
@@ -261,14 +260,25 @@ class KokoroApp(App):
         async for chunk in self.kokoro.get_outputs():
             log(
                 "got audio chunk",
+                audio=chunk.audio,
                 chunk_generation=chunk.generation,
                 app_generation=self.generation,
                 chunk_index=chunk.index,
                 app_len=len(self.texts),
             )
             if chunk.generation == self.generation and chunk.index < len(self.texts):
-                self.sound.feed(chunk.data, chunk.index, chunk.overwrite)
+                self.sound.feed(
+                    chunk.audio,
+                    chunk.index,
+                    chunk.overwrite,
+                )
             self.update_loading_indicator()
+
+    @work(exclusive=True, group="highlighting")
+    async def sound_listener(self):
+        async for indices in self.sound.get_text_indices():
+            log("highlighting text index", indices)
+            self.screen_stack[0].query_one(SourceView).highlight_range(indices)
 
     async def action_new(self):
         await self.make_audio(get_text_from_paste(), False)
@@ -295,9 +305,7 @@ class KokoroApp(App):
         self.kokoro.cancel()
         text = self.texts[self.index]
         log("regenerating", text=text, index=self.index)
-        self.kokoro.feed(
-            text=text, index=self.index, generation=self.generation, overwrite=True
-        )
+        self.kokoro.feed(DataInput(text, None, self.index, self.generation, True))
         self.update_loading_indicator(True)
 
     def action_config(self):
@@ -312,6 +320,7 @@ class KokoroApp(App):
         self.sound.clear_history()
         self.query_one(SourceView).clear()
         self.query_one(ListView).clear()
+        self.refresh_bindings()
 
     @work(exclusive=True, group="update_config")
     async def update_config(self):
@@ -444,17 +453,21 @@ class KokoroApp(App):
             )
 
     async def make_audio(self, text: str, append: bool):
+        if not text.endswith("\n"):
+            text += "\n"
         if not append or self.index < 0:
             self.kokoro.cancel()
             self.index = len(self.texts)
-            self.kokoro.feed(text=text, index=self.index, generation=self.generation)
+            self.kokoro.feed(DataInput(text, None, self.index, self.generation, True))
             self.texts.append(text)
             self.refresh_bindings()
             self.screen_stack[0].query_one(SourceView).overwrite(text)
             await self.screen_stack[0].query_one(AudioList).append(text)
         else:
-            self.kokoro.feed(text=text, index=self.index, generation=self.generation)
-            self.texts[self.index] += "\n" + text
+            self.texts[self.index] += text
+            self.kokoro.feed(
+                DataInput(text, self.texts[self.index], self.index, self.generation)
+            )
             self.screen_stack[0].query_one(SourceView).write_str(text)
         self.update_loading_indicator(True)
 

@@ -15,7 +15,7 @@ from textual.widgets import (
 )
 from textual.widgets._select import NoSelection
 
-from lib.agents.kokoro import KokoroAgent
+from lib.agents.kokoro import Config
 
 
 class FilepathInput(ModalScreen[str]):
@@ -85,7 +85,7 @@ class ConfirmationScreen(ModalScreen[bool]):
         self.dismiss(v)
 
 
-class ConfigScreen(ModalScreen[KokoroAgent.Config]):
+class ConfigScreen(ModalScreen[Config]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding(
             "ctrl+enter",
@@ -98,7 +98,7 @@ class ConfigScreen(ModalScreen[KokoroAgent.Config]):
 
     def __init__(
         self,
-        config: KokoroAgent.Config,
+        config: Config,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,

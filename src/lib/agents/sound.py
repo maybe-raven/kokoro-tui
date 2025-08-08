@@ -1,121 +1,132 @@
 import asyncio
 import time
 from abc import ABC
+from ctypes import Structure, c_int
 from dataclasses import dataclass
-from multiprocessing import Event
-from multiprocessing import Process
-from multiprocessing import Queue
+from multiprocessing import Event, Process, Queue, Value
 from queue import Empty
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional, Tuple
 
 import soundfile
-from numpy import concatenate
 from numpy._typing import NDArray
 from soundcard import default_speaker
-from torch import FloatTensor, Tensor
 
-from lib import SLEEP_TIME
+# from textual import log
+from lib.agents import SAMPLE_RATE, Audio
 
-SAMPLE_RATE = 24000
 BLOCK_SIZE = 512
+DEFAULT_SLEEP_TIME = 0.3
+FAST_SLEEP_TIME = 0.1
+
+
+class RangeStruct(Structure):
+    _fields_ = [("start", c_int), ("end", c_int)]
+
+
+class Input(ABC):
+    def apply(self, agent: "SoundAgent", player):
+        pass
+
+
+@dataclass
+class DataInput(Input):
+    chunk: Audio
+    index: int
+    overwrite: bool = False
+
+    def apply(self, agent: "SoundAgent", player):
+        index = self.index
+        n = len(agent._data)
+        if n <= index:
+            agent._data.append(self.chunk)
+            agent._track_index = n
+            agent._seek_and_play(0, player)
+        elif self.overwrite:
+            agent._data[index] = self.chunk
+            agent._seek_and_play(0, player)
+        else:
+            agent._data[index].concat(self.chunk)
+            if player is not None:
+                player.play(self.chunk.data, wait=False)
+
+
+@dataclass
+class ChangeTrack(Input):
+    index: int
+
+    def apply(self, agent: "SoundAgent", player):
+        if len(agent._data) <= self.index:
+            agent._track_index = len(agent._data) - 1
+        else:
+            agent._track_index = self.index
+        agent._seek_and_play(0, player)
+
+
+@dataclass
+class SeekSecs(Input):
+    secs: float
+
+    def apply(self, agent: "SoundAgent", player):
+        if agent._track_index < 0:
+            return
+        if agent._start_timestamp is None:
+            agent._seek_and_play(
+                int(self.secs * SAMPLE_RATE) + agent._start_index, player
+            )
+        else:
+            assert player is not None
+            agent._seek_and_play(
+                int((time.time() - agent._start_timestamp + self.secs) * SAMPLE_RATE)
+                + agent._start_index,
+                player,
+            )
+
+
+@dataclass
+class Save(Input):
+    path: str
+
+    def apply(self, agent: "SoundAgent", player):
+        if agent._track_index < 0:
+            return
+        try:
+            soundfile.write(
+                self.path,
+                data=agent._get_data(),
+                samplerate=SAMPLE_RATE,
+            )
+            agent.output_queue.put(Output())
+        except Exception as e:
+            agent.output_queue.put(Output(e))
+
+
+@dataclass
+class ClearHistory(Input):
+    pass
+
+    def apply(self, agent: "SoundAgent", player):
+        agent._data.clear()
+        agent._start_index = 0
+        agent._start_timestamp = None
+        agent._track_index = -1
+
+
+@dataclass
+class Output:
+    error: Optional[Exception] = None
 
 
 class SoundAgent:
-    class Input(ABC):
-        def apply(self, agent: "SoundAgent", player):
-            pass
-
-    @dataclass
-    class DataInput(Input):
-        data: Tensor
-        index: int
-        overwrite: bool = False
-
-        def apply(self, agent: "SoundAgent", player):
-            index = self.index
-            n = len(agent._data)
-            input_data = self.data.numpy()
-            if n <= index:
-                agent._data.append(input_data)
-                agent._track_index = n
-                agent._seek_and_play(0, player)
-            elif self.overwrite:
-                agent._data[index] = input_data
-                agent._seek_and_play(0, player)
-            else:
-                agent._data[index] = concatenate((agent._data[index], input_data))
-                if player is not None:
-                    player.play(input_data, wait=False)
-
-    @dataclass
-    class ChangeTrack(Input):
-        index: int
-
-        def apply(self, agent: "SoundAgent", player):
-            if len(agent._data) <= self.index:
-                agent._track_index = len(agent._data) - 1
-            else:
-                agent._track_index = self.index
-            agent._seek_and_play(0, player)
-
-    @dataclass
-    class SeekSecs(Input):
-        secs: float
-
-        def apply(self, agent: "SoundAgent", player):
-            if agent._track_index < 0:
-                return
-            if agent._start_timestamp is None:
-                agent._seek_and_play(
-                    int(self.secs * SAMPLE_RATE) + agent._start_index, player
-                )
-            else:
-                assert player is not None
-                agent._seek_and_play(
-                    int(
-                        (time.time() - agent._start_timestamp + self.secs) * SAMPLE_RATE
-                    )
-                    + agent._start_index,
-                    player,
-                )
-
-    @dataclass
-    class Save(Input):
-        path: str
-
-        def apply(self, agent: "SoundAgent", player):
-            if agent._track_index < 0:
-                return
-            try:
-                soundfile.write(
-                    self.path,
-                    data=agent._get_data(),
-                    samplerate=SAMPLE_RATE,
-                )
-                agent.output_queue.put(SoundAgent.Output())
-            except Exception as e:
-                agent.output_queue.put(SoundAgent.Output(e))
-
-    @dataclass
-    class ClearHistory(Input):
-        pass
-
-        def apply(self, agent: "SoundAgent", player):
-            agent._data.clear()
-            agent._start_index = 0
-            agent._start_timestamp = None
-            agent._track_index = -1
-
-    @dataclass
-    class Output:
-        error: Optional[Exception] = None
-
     def __init__(self) -> None:
-        self.input_queue: Queue[SoundAgent.Input] = Queue()
-        self.output_queue: Queue[SoundAgent.Output] = Queue()
+        self.input_queue: Queue[Input] = Queue()
+        self.output_queue: Queue[Output] = Queue()
+        self.text_indices = Value(RangeStruct)
+        self.text_indices.start = -1
+        self.text_indices.end = -1
+        self._token_index = 0
         self._start_index = 0
         self._start_timestamp = None
-        self._data: List[NDArray] = []
+        self._data: List[Audio] = []
         self._track_index = -1
         self._is_playing = Event()
         self._is_playing.set()
@@ -128,7 +139,7 @@ class SoundAgent:
             if self._should_play():
                 self._run_inner()
             else:
-                self._process_input(None)
+                self._process_input()
 
     def _run_inner(self):
         with default_speaker().player(
@@ -137,25 +148,58 @@ class SoundAgent:
             self._seek_and_play(self._start_index, player, False)
 
             while self._should_play():
-                self._process_input(player)
+                self._update_text_indices()
+                self._process_input(player, FAST_SLEEP_TIME)
                 if not player._queue:
                     assert self._start_timestamp is not None
                     self._start_index = len(self._get_data())
                     self._start_timestamp = None
+                    self._reset_text_indices()
                     return
 
-            if self._start_timestamp is not None:
-                self._start_index += int(
-                    (time.time() - self._start_timestamp) * SAMPLE_RATE
-                )
-                self._start_timestamp = None
+            self._start_index = self._current_index()
+            self._start_timestamp = None
 
-    def _process_input(self, player):
+    def _current_index(self) -> int:
+        if self._start_timestamp is None:
+            return self._start_index
+        else:
+            return self._start_index + int(
+                (time.time() - self._start_timestamp) * SAMPLE_RATE
+            )
+
+    def _reset_text_indices(self):
+        self._token_index = 0
+        with self.text_indices.get_lock():
+            self.text_indices.start = -1
+            self.text_indices.end = -1
+
+    def _update_text_indices(self):
+        assert self._start_timestamp is not None
+        index = self._current_index()
+        # log(
+        #     "_update_text_indices",
+        #     tokens=self._data[self._track_index].tokens[self._token_index :],
+        #     current_index=index,
+        # )
+        for i, token in enumerate(
+            self._data[self._track_index].tokens[self._token_index :]
+        ):
+            if token.start_index <= index and token.end_index >= index:
+                with self.text_indices.get_lock():
+                    self.text_indices.start = token.text_index_start
+                    self.text_indices.end = token.text_index_end
+                self._token_index += i
+                return
+
+        self._reset_text_indices()
+
+    def _process_input(self, player=None, sleep_time: float = DEFAULT_SLEEP_TIME):
         try:
             input = self.input_queue.get_nowait()
             input.apply(self, player)
         except Empty:
-            time.sleep(SLEEP_TIME)
+            time.sleep(sleep_time)
 
     def _should_play(self) -> bool:
         return (
@@ -177,10 +221,10 @@ class SoundAgent:
             player.play(self._get_data()[self._start_index :], wait=False)
 
     def _get_data(self) -> NDArray:
-        return self._data[self._track_index]
+        return self._data[self._track_index].data
 
     def save(self, path: str):
-        self.input_queue.put(SoundAgent.Save(path))
+        self.input_queue.put(Save(path))
 
     def stop(self):
         self._stop_event.set()
@@ -201,21 +245,33 @@ class SoundAgent:
         else:
             self._is_playing.set()
 
-    def feed(self, data: FloatTensor, index: int, overwrite: bool = False):
-        self.input_queue.put(SoundAgent.DataInput(data, index, overwrite))
+    def feed(self, chunk: Audio, index: int, overwrite: bool = False):
+        self.input_queue.put(DataInput(chunk, index, overwrite))
 
     def change_track(self, index: int):
-        self.input_queue.put(SoundAgent.ChangeTrack(index))
+        self.input_queue.put(ChangeTrack(index))
 
     def seek_secs(self, secs: float):
-        self.input_queue.put(SoundAgent.SeekSecs(secs))
+        self.input_queue.put(SeekSecs(secs))
 
     def clear_history(self):
-        self.input_queue.put(SoundAgent.ClearHistory())
+        self.input_queue.put(ClearHistory())
 
     async def get_output(self) -> Optional[Output]:
         while not self._stop_event.is_set():
             try:
                 return self.output_queue.get_nowait()
             except Empty:
-                await asyncio.sleep(SLEEP_TIME)
+                await asyncio.sleep(DEFAULT_SLEEP_TIME)
+
+    async def get_text_indices(self) -> AsyncGenerator[Optional[Tuple[int, int]], None]:
+        last_yielded = None
+        while not self._stop_event.is_set():
+            with self.text_indices.get_lock():
+                start = self.text_indices.start
+                end = self.text_indices.end
+            ret = (start, end) if start >= 0 and end >= 0 else None
+            if ret != last_yielded:
+                last_yielded = ret
+                yield ret
+            await asyncio.sleep(FAST_SLEEP_TIME)

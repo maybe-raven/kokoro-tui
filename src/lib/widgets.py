@@ -1,10 +1,11 @@
 import asyncio
 from datetime import datetime
-from typing import Self
+from typing import Optional, Self, Tuple
 
-from textual import work
+from textual import markup, work
 from textual.app import ComposeResult
 from textual.containers import VerticalGroup
+from textual.content import Content
 from textual.events import Resize
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -39,7 +40,6 @@ class SourceView(RichLog):
         self,
         *,
         min_width: int = 0,
-        auto_scroll: bool = True,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
@@ -50,8 +50,8 @@ class SourceView(RichLog):
             min_width=min_width,
             wrap=True,
             highlight=False,
-            markup=False,
-            auto_scroll=auto_scroll,
+            markup=True,
+            auto_scroll=False,
             name=name,
             id=id,
             classes=classes,
@@ -59,26 +59,49 @@ class SourceView(RichLog):
         )
         self.text = None
 
-    def write_str(self, content: str) -> Self:
+    def write_escaped(self, text: str) -> Self:
+        return self.write(markup.escape(text))
+
+    def write_str(self, text: str) -> Self:
         if self.text is None:
-            self.text = content
+            self.text = text
         else:
-            self.text += content
-        return self.write(content)
+            self.text += text
+        return self.write_escaped(text)
 
     def clear(self) -> Self:
         self.text = None
         return super().clear()
 
-    def overwrite(self, content) -> Self:
-        self.clear()
-        self.text = content
-        return self.write(content)
+    def overwrite(self, text: str) -> Self:
+        super().clear()
+        self.text = text
+        return self.write_escaped(text)
+
+    def reset(self):
+        super().clear()
+        if self.text is not None:
+            self.write_escaped(self.text)
+
+    def highlight_range(self, indices: Optional[Tuple[int, int]]):
+        if self.text is None:
+            return
+        if indices is None:
+            self.reset()
+        else:
+            start, end = indices
+            super().clear()
+            self.write(
+                Content.assemble(
+                    self.text[:start],
+                    (self.text[start:end], "on purple"),
+                    self.text[end:],
+                ).markup
+            )
 
     def on_resize(self, event: Resize):
         super().on_resize(event)
-        if self.text is not None:
-            self.overwrite(self.text)
+        self.reset()
 
 
 class HumanizedTimeLabel(Widget):
