@@ -63,6 +63,8 @@ class SoundAgent:
         secs: float
 
         def apply(self, agent: "SoundAgent", player):
+            if agent._track_index < 0:
+                return
             if agent._start_timestamp is None:
                 agent._seek_and_play(
                     int(self.secs * SAMPLE_RATE) + agent._start_index, player
@@ -82,7 +84,7 @@ class SoundAgent:
         path: str
 
         def apply(self, agent: "SoundAgent", player):
-            if agent._track_index is None:
+            if agent._track_index < 0:
                 return
             try:
                 soundfile.write(
