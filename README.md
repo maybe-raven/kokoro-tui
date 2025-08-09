@@ -4,10 +4,14 @@ A simple TUI for on-device inference with [Kokoro TTS](https://huggingface.co/he
 
 Features:
 - Generate audio __locally__ from system clipboard, text files, or Unix socket.
-- Play generated audio in-memory.
+- Stream generated audio in-memory with real-time per-word highlighting.
 - Save generated audio to file.
 - View audio generation history (in-memory only for now).
 - Change Kokoro generation settings.
+
+# Demo
+
+https://github.com/user-attachments/assets/94d2b48a-1fc5-4f11-8cf8-43e17235decf
 
 # To Run
 
