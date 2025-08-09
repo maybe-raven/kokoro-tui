@@ -51,12 +51,12 @@ class KokoroAgent:
             with open(filepath, "w") as f:
                 json.dump(asdict(self), f)
 
-        def __post_init__(self):
-            self.lang_code = self.voice[0]
+        def lang_code(self) -> str:
+            return self.voice[0]
 
         def compare_pipeline(self, other: Self) -> bool:
             return (
-                self.lang_code == other.lang_code
+                self.lang_code() == other.lang_code()
                 and self.trf == other.trf
                 and self.device == other.device
             )
@@ -94,7 +94,7 @@ class KokoroAgent:
     def _run(self):
         self._model = KModel()
         self._pipeline = KPipeline(
-            lang_code=self._config.lang_code,
+            lang_code=self._config.lang_code(),
             trf=self._config.trf,
             device=self._config.device,
             model=self._model,
@@ -106,7 +106,7 @@ class KokoroAgent:
                     with self._config_lock:
                         if not self._config.compare_pipeline(input.config):
                             self._pipeline = KPipeline(
-                                lang_code=input.config.lang_code,
+                                lang_code=input.config.lang_code(),
                                 trf=input.config.trf,
                                 device=input.config.device,
                                 model=self._model,
